@@ -1,0 +1,141 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id String @id @default(uuid())
+  nama String
+  username String
+  password String
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@map("tb_users")
+}
+
+// Models
+model Dosen {
+  id String @id @default(uuid())
+  nama String
+  kode String @unique
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  jadwal Jadwal[]
+
+  @@map("tb_dosens")
+}
+
+enum Period {
+  PAGI
+  SIANG
+  SORE
+}
+
+model Kelas {
+  id String @id @default(uuid())
+  nama String  // Contains semester info (e.g., "2A" for semester 2)
+  period Period
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  jadwal Jadwal[]
+
+  @@unique([nama, period])
+  @@map("tb_kelas")
+}
+
+model MataKuliah {
+  id String @id @default(uuid())
+  prodi_id String
+  nama String
+  sks Int
+  jam Int
+  kode String
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  jadwal Jadwal[]
+  
+  prodi Prodi @relation(fields: [prodi_id], references: [id])
+
+  @@unique([kode, prodi_id])
+  @@map("tb_mata_kuliahs")
+}
+
+model Prodi {
+  id String @id @default(uuid())
+  nama String @unique
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  mataKuliah MataKuliah[]
+
+  @@map("tb_prodis")
+}
+
+model TimeSlot {
+  id String @id @default(uuid())
+  start_time String
+  end_time String
+  display_text String // e.g. "07.00-07.50"
+  period Period
+  day_specific Boolean @default(false)
+  
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  
+  jadwal Jadwal[]
+  
+  @@unique([start_time, end_time, period])
+  @@map("tb_time_slots")
+}
+
+enum Day {
+  SENIN
+  SELASA
+  RABU
+  KAMIS
+  JUMAT
+  SABTU
+  MINGGU
+}
+
+model Jadwal {
+  id        String @id @default(uuid())
+  dosen_id  String
+  mata_kuliah_id String
+  kelas_id String
+  time_slot_id String
+  hari Day
+  period Period
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  dosen Dosen @relation(fields: [dosen_id], references: [id])
+  mata_kuliah MataKuliah @relation(fields: [mata_kuliah_id], references: [id])
+  kelas Kelas @relation(fields: [kelas_id], references: [id])
+  time_slot TimeSlot @relation(fields: [time_slot_id], references: [id])
+
+  @@unique([dosen_id, hari, time_slot_id])
+  @@unique([kelas_id, hari, time_slot_id])
+
+  @@map("tb_jadwals")
+}
