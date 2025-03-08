@@ -13,7 +13,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { toast } from "sonner";
 import {
   Select,
   SelectTrigger,
@@ -21,52 +20,34 @@ import {
   SelectItem,
   SelectValue,
 } from "@/components/ui/select";
+import { useData, useMutateData } from "@/hooks/use-data";
+import {MataKuliah, Prodi} from "@/types/jadwal"
 
-// Model Mata Kuliah
-interface MataKuliah {
-  id: string;
-  nama: string;
-  sks: number;
-  jam: number;
-  kode: string;
-  semester: number
-  prodi_id: string
-}
-
-interface Prodi {
-  id: string;
-  nama: string;
-}
 
 export default function MatkulTable() {
-  const [data, setData] = useState<MataKuliah[]>([]);
   const [open, setOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [formData, setFormData] = useState<MataKuliah>({
     id: "",
     nama: "",
-    sks: 0,
-    jam: 0,
+    sks: 1,
+    jam: 1,
     kode: "",
     prodi_id: "",
-    semester: 0
+    semester: 1,
   });
   const [isEditing, setIsEditing] = useState(false);
-  const [prodis, setProdis] = useState<Prodi[]>([]);
+  // const [prodis, setProdis] = useState<Prodi[]>([]);
 
-  useEffect(() => {
-    async function fetchData() {
-      const res = await fetch("/api/matkul");
-      const result = await res.json();
-      setData(result);
-
-      const prodiRes = await fetch("/api/prodi");
-      const prodiData = await prodiRes.json();
-      setProdis(prodiData);
-    }
-    fetchData();
-  }, []);
+  const {
+    data: matkul,
+    isLoading,
+    isError,
+  } = useData<MataKuliah>("matakuliah", "/api/matkul");
+  const { data: prodis } = useData<Prodi>("prodi", "/api/prodi");
+  const { addMutation, editMutation, deleteMutation } =
+    useMutateData<MataKuliah>("matakuliah", "/api/matkul");
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -81,29 +62,28 @@ export default function MatkulTable() {
   };
 
   const handleSubmit = async () => {
-    const method = isEditing ? "PUT" : "POST";
-    const url = "/api/matkul";
-
-    const res = await fetch(url, {
-      method,
-      body: JSON.stringify(formData),
-      headers: { "Content-Type": "application/json" },
-    });
-
-    if (res.ok) {
-      const result = await res.json();
-      setData((prevData) =>
-        isEditing
-          ? prevData.map((m) => (m.id === result.id ? result : m))
-          : [...prevData, result]
-      );
-      toast.success(
-        `Mata kuliah berhasil ${isEditing ? "diperbarui" : "ditambahkan"}`
-      );
+    if (isEditing) {
+      await editMutation.mutateAsync({
+        id: formData.id,
+        updatedData: {
+          id: formData.id,
+          nama: formData.nama,
+          sks: formData.sks,
+          jam: formData.jam,
+          kode: formData.kode,
+          prodi_id: formData.prodi_id,
+          semester: formData.semester,
+        },
+      });
     } else {
-      toast.error(
-        `Gagal ${isEditing ? "memperbarui" : "menambahkan"} mata kuliah`
-      );
+      await addMutation.mutateAsync({
+        nama: formData.nama,
+        sks: formData.sks,
+        jam: formData.jam,
+        kode: formData.kode,
+        prodi_id: formData.prodi_id,
+        semester: formData.semester,
+      });
     }
 
     setOpen(false);
@@ -111,20 +91,7 @@ export default function MatkulTable() {
 
   const handleDelete = async () => {
     if (!deleteId) return;
-
-    const res = await fetch("/api/matkul", {
-      method: "DELETE",
-      body: JSON.stringify({ id: deleteId }),
-      headers: { "Content-Type": "application/json" },
-    });
-
-    if (res.ok) {
-      setData((prevData) => prevData.filter((m) => m.id !== deleteId));
-      toast.success("Mata kuliah berhasil dihapus");
-    } else {
-      toast.error("Gagal menghapus mata kuliah");
-    }
-
+    await deleteMutation.mutateAsync(deleteId);
     setConfirmOpen(false);
   };
 
@@ -139,7 +106,12 @@ export default function MatkulTable() {
     { accessorKey: "nama", header: "Nama" },
     { accessorKey: "sks", header: "SKS" },
     { accessorKey: "jam", header: "Jam" },
-    { accessorKey: "prodi_id", header: "Program Studi", cell: ({row}) => prodis.find((p) => p.id == row.original.prodi_id)?.nama || "-"  },
+    {
+      accessorKey: "prodi_id",
+      header: "Program Studi",
+      cell: ({ row }) =>
+        prodis?.find((p) => p.id == row.original.prodi_id)?.nama || "-",
+    },
     {
       id: "actions",
       header: "Aksi",
@@ -169,14 +141,22 @@ export default function MatkulTable() {
         className="mb-4"
         onClick={() => {
           setIsEditing(false);
-          setFormData({ id: "", nama: "", sks: 0, jam: 0, kode: "", prodi_id: "", semester: 0 });
+          setFormData({
+            id: "",
+            nama: "",
+            sks: 0,
+            jam: 0,
+            kode: "",
+            prodi_id: "",
+            semester: 0,
+          });
           setOpen(true);
         }}
       >
         Tambah Mata Kuliah
       </Button>
 
-      <DataTable columns={columns} data={data} />
+      <DataTable columns={columns} data={matkul ?? []} />
 
       {/* Modal Form */}
       <Dialog open={open} onOpenChange={setOpen}>
@@ -223,12 +203,15 @@ export default function MatkulTable() {
             </div>
             <div>
               <Label>Prodi</Label>
-              <Select value={formData.prodi_id} onValueChange={handleProdiChange}>
+              <Select
+                value={formData.prodi_id}
+                onValueChange={handleProdiChange}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Pilih Prodi" />
                 </SelectTrigger>
                 <SelectContent>
-                  {prodis.map((prodi) => (
+                  {prodis?.map((prodi) => (
                     <SelectItem key={prodi.id} value={prodi.id}>
                       {prodi.nama}
                     </SelectItem>
@@ -239,7 +222,10 @@ export default function MatkulTable() {
 
             <div>
               <Label>Semester</Label>
-              <Select value={formData.semester.toString()} onValueChange={handleSemesterChange}>
+              <Select
+                value={formData.semester.toString()}
+                onValueChange={handleSemesterChange}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Pilih Semester" />
                 </SelectTrigger>

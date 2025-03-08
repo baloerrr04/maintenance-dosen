@@ -66,6 +66,7 @@ model MataKuliah {
   sks Int
   jam Int
   kode String
+  semester Int?
 
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt

@@ -4,12 +4,29 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Download, AlertTriangle, Plus } from 'lucide-react';
+import { Download, AlertTriangle, Plus, Pencil, Trash2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuTrigger 
+} from '@/components/ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "@/components/ui/alert-dialog";
 import JadwalForm from '@/components/jadwal-form';
+import JadwalEditForm, { JadwalEntry } from '@/components/jadwal-edit-form';
 
-// Define proper TypeScript interfaces for our data
+// Define proper TypeScript interfaces for our data if not already imported
 interface TimeSlot {
   id: string;
   display_text: string;
@@ -25,35 +42,6 @@ interface Kelas {
   period: string;
 }
 
-interface Dosen {
-  id: string;
-  nama: string;
-  kode: string;
-}
-
-interface MataKuliah {
-  id: string;
-  nama: string;
-  kode: string;
-  prodi_id: string;
-  sks: number;
-  jam: number;
-}
-
-interface JadwalEntry {
-  id: string;
-  dosen_id: string;
-  mata_kuliah_id: string;
-  kelas_id: string;
-  time_slot_id: string;
-  hari: string;
-  period: string;
-  dosen: Dosen;
-  mata_kuliah: MataKuliah;
-  kelas: Kelas;
-  time_slot: TimeSlot;
-}
-
 const JadwalTable: React.FC = () => {
   const [selectedPeriod, setSelectedPeriod] = useState<string>('PAGI');
   const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([]);
@@ -62,7 +50,10 @@ const JadwalTable: React.FC = () => {
   const [availableDays, setAvailableDays] = useState<string[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [dialogOpen, setDialogOpen] = useState<boolean>(false);
+  const [addDialogOpen, setAddDialogOpen] = useState<boolean>(false);
+  const [editDialogOpen, setEditDialogOpen] = useState<boolean>(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState<boolean>(false);
+  const [selectedJadwal, setSelectedJadwal] = useState<JadwalEntry | null>(null);
   
   // Set default days for each period
   const getDefaultDays = (period: string): string[] => {
@@ -71,33 +62,30 @@ const JadwalTable: React.FC = () => {
       : ['SENIN', 'SELASA', 'RABU', 'KAMIS', 'JUMAT'];
   };
   
-  // Seed function - only use this once to populate your database
-  const seedTimeSlots = async () => {
-    try {
-      const response = await fetch('/api/timeslots', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action: 'seed',
-          clear: true
-        }),
-      });
+  // Define time slot groups (before/after break)
+  const getGroupedTimeSlots = (slots: TimeSlot[]): {beforeBreak: TimeSlot[], afterBreak: TimeSlot[]} => {
+    const beforeBreak: TimeSlot[] = [];
+    const afterBreak: TimeSlot[] = [];
+    
+    slots.forEach(slot => {
+      // In your schema, the break comes after 08:40-09:30
+      // So we need to identify which time slots are before/after this break point
+      const isBeforeBreak = slot.display_text === '08.40-09.30' || 
+                           slot.display_text === '07.00-07.50' || 
+                           slot.display_text === '07.50-08.40';
       
-      if (!response.ok) {
-        throw new Error('Failed to seed time slots');
+      if (isBeforeBreak) {
+        beforeBreak.push(slot);
+      } else {
+        afterBreak.push(slot);
       }
-      
-      const result = await response.json();
-      console.log(result.message);
-      
-      // Refresh the data
-      fetchData();
-    } catch (error) {
-      console.error('Error seeding time slots:', error);
-      setError('Failed to seed time slots. Check console for details.');
-    }
+    });
+    
+    // Sort each group by start time
+    beforeBreak.sort((a, b) => a.start_time.localeCompare(b.start_time));
+    afterBreak.sort((a, b) => a.start_time.localeCompare(b.start_time));
+    
+    return { beforeBreak, afterBreak };
   };
   
   // Fetch data function
@@ -112,13 +100,9 @@ const JadwalTable: React.FC = () => {
         throw new Error(`Failed to fetch time slots: ${timeSlotsResponse.status} ${timeSlotsResponse.statusText}`);
       }
       
-      // Get response text first to debug
-      const timeSlotText = await timeSlotsResponse.text();
-      console.log('Time slots response:', timeSlotText);
-      
-      // Parse JSON if possible
       let timeSlotsData: TimeSlot[] = [];
       try {
+        const timeSlotText = await timeSlotsResponse.text();
         timeSlotsData = JSON.parse(timeSlotText);
       } catch (e) {
         console.error('Failed to parse time slots JSON:', e);
@@ -175,15 +159,76 @@ const JadwalTable: React.FC = () => {
     );
   };
   
-  // Function to render a cell's content
+  // Handle edit jadwal
+  const handleEditJadwal = (jadwalEntry: JadwalEntry) => {
+    setSelectedJadwal(jadwalEntry);
+    setEditDialogOpen(true);
+  };
+  
+  // Handle delete jadwal
+  const handleDeleteConfirm = (jadwalEntry: JadwalEntry) => {
+    setSelectedJadwal(jadwalEntry);
+    setDeleteDialogOpen(true);
+  };
+  
+  // Perform actual delete
+  const performDelete = async () => {
+    if (!selectedJadwal) return;
+    
+    try {
+      const response = await fetch(`/api/jadwal/${selectedJadwal.id}`, {
+        method: 'DELETE',
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete jadwal');
+      }
+      
+      // Refresh data and close dialog
+      fetchData();
+      setDeleteDialogOpen(false);
+      setSelectedJadwal(null);
+    } catch (error) {
+      console.error('Error deleting jadwal:', error);
+      setError('Failed to delete jadwal. Check console for details.');
+    }
+  };
+  
+  // Function to render a cell's content with action buttons
   const renderCell = (day: string, timeSlot: TimeSlot, kelasItem: Kelas): React.ReactNode => {
     const entry = getJadwalForCell(day, timeSlot.id, kelasItem.id);
     
     if (!entry) return null;
     
     return (
-      <div className="text-xs p-1">
+      <div className="text-xs p-1 group relative">
         <div className="font-bold">{entry.mata_kuliah.kode}/{entry.dosen.kode}</div>
+        
+        {/* Action buttons - visible on hover */}
+        <div className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 transition-opacity">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-6 w-6">
+                <svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M8.625 2.5C8.625 3.12132 8.12132 3.625 7.5 3.625C6.87868 3.625 6.375 3.12132 6.375 2.5C6.375 1.87868 6.87868 1.375 7.5 1.375C8.12132 1.375 8.625 1.87868 8.625 2.5ZM8.625 7.5C8.625 8.12132 8.12132 8.625 7.5 8.625C6.87868 8.625 6.375 8.12132 6.375 7.5C6.375 6.87868 6.87868 6.375 7.5 6.375C8.12132 6.375 8.625 6.87868 8.625 7.5ZM7.5 13.625C8.12132 13.625 8.625 13.1213 8.625 12.5C8.625 11.8787 8.12132 11.375 7.5 11.375C6.87868 11.375 6.375 11.8787 6.375 12.5C6.375 13.1213 6.87868 13.625 7.5 13.625Z" fill="currentColor" fillRule="evenodd" clipRule="evenodd"></path>
+                </svg>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => handleEditJadwal(entry)}>
+                <Pencil className="h-4 w-4 mr-2" />
+                Edit
+              </DropdownMenuItem>
+              <DropdownMenuItem 
+                onClick={() => handleDeleteConfirm(entry)}
+                className="text-red-600"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
     );
   };
@@ -216,8 +261,9 @@ const JadwalTable: React.FC = () => {
 
   // Handle successful form submission
   const handleFormSuccess = () => {
-    // Close the dialog
-    setDialogOpen(false);
+    // Close the dialogs
+    setAddDialogOpen(false);
+    setEditDialogOpen(false);
     // Refresh data
     fetchData();
   };
@@ -237,20 +283,11 @@ const JadwalTable: React.FC = () => {
     }
   };
   
-  // Function to filter time slots based on day and period
-  const filterTimeSlotsByDay = (day: string, allTimeSlots: TimeSlot[]): TimeSlot[] => {
-    if (selectedPeriod === 'SORE') {
-      if (day === 'SABTU') {
-        // Saturday-specific slots for evening schedule
-        return allTimeSlots.filter(ts => ts.day_specific);
-      } else {
-        // Weekday slots for evening schedule
-        return allTimeSlots.filter(ts => !ts.day_specific);
-      }
-    }
-    // For morning and afternoon, all slots apply
-    return allTimeSlots;
-  };
+  // Group time slots for breaks
+  const { beforeBreak, afterBreak } = getGroupedTimeSlots(timeSlots);
+  
+  // Calculate the total number of columns (HARI/JAM column + each kelas column)
+  const totalColumns = kelas.length + 1;
   
   return (
     <Card className="w-full">
@@ -272,7 +309,7 @@ const JadwalTable: React.FC = () => {
           </Select>
           
           {/* Add Schedule Button with Dialog */}
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
             <DialogTrigger asChild>
               <Button className="flex items-center gap-2">
                 <Plus size={16} />
@@ -294,13 +331,6 @@ const JadwalTable: React.FC = () => {
             <Download size={16} />
             Export Excel
           </Button>
-          
-          {/* Only show this during development */}
-          {process.env.NODE_ENV === 'development' && (
-            <Button onClick={seedTimeSlots} variant="outline">
-              Seed TimeSlots
-            </Button>
-          )}
         </div>
       </CardHeader>
       
@@ -315,7 +345,7 @@ const JadwalTable: React.FC = () => {
         {timeSlots.length === 0 ? (
           <div className="p-8 text-center">
             <p className="mb-4">No time slots found for this period.</p>
-            <Button onClick={seedTimeSlots}>Initialize Time Slots</Button>
+            <Button onClick={() => {}}>Initialize Time Slots</Button>
           </div>
         ) : kelas.length === 0 ? (
           <div className="p-8 text-center">
@@ -325,44 +355,130 @@ const JadwalTable: React.FC = () => {
           <table className="w-full border-collapse border border-gray-300">
             <thead>
               <tr className="bg-gray-100">
-                <th colSpan={2} className="border border-gray-300 p-2">HARI/JAM</th>
-                {kelas.map(k => (
+                <th rowSpan={2} className="border border-gray-300 p-2">HARI/JAM</th>
+                <th colSpan={kelas.length} className="border border-gray-300 p-2">KELAS/KODE MATA KULIAH/ KODE DOSEN</th>
+              </tr>
+              <tr>
+              {kelas.map(k => (
                   <th key={k.id} className="border border-gray-300 p-2 text-center">{k.nama}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {availableDays.map(day => {
-                const dayTimeSlots = filterTimeSlotsByDay(day, timeSlots);
-                
-                return dayTimeSlots.map((timeSlot, timeIdx) => (
-                  <tr key={`${day}-${timeSlot.id}`} className={timeIdx % 2 === 0 ? 'bg-gray-50' : ''}>
-                    {timeIdx === 0 && (
-                      <td 
-                        rowSpan={dayTimeSlots.length} 
-                        className="border border-gray-300 p-2 font-bold text-center align-middle"
-                      >
-                        {day}
-                      </td>
-                    )}
-                    <td className="border border-gray-300 p-2 text-center whitespace-nowrap">
-                      {timeSlot.display_text}
+              {availableDays.map((day, dayIndex) => (
+                <React.Fragment key={day}>
+                  {/* Day header row spanning all columns */}
+                  <tr className="bg-blue-50">
+                    <td 
+                      colSpan={totalColumns}
+                      className="border border-gray-300 p-2 font-bold text-center"
+                    >
+                      {day}
                     </td>
-                    {kelas.map(k => (
-                      <td 
-                        key={`${day}-${timeSlot.id}-${k.id}`} 
-                        className="border border-gray-300 p-2 text-center min-w-20"
-                      >
-                        {renderCell(day, timeSlot, k)}
-                      </td>
-                    ))}
                   </tr>
-                ));
-              })}
+                  
+                  {/* Morning sessions (before break) */}
+                  {beforeBreak.map((timeSlot) => (
+                    <tr key={`${day}-${timeSlot.id}`} className="bg-gray-50">
+                      <td className="border border-gray-300 p-2 text-center whitespace-nowrap">
+                        {timeSlot.display_text}
+                      </td>
+                      {kelas.map(k => (
+                        <td 
+                          key={`${day}-${timeSlot.id}-${k.id}`} 
+                          className="border border-gray-300 p-2 text-center min-w-20"
+                        >
+                          {renderCell(day, timeSlot, k)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                  
+                  {/* BREAK row */}
+                  {(beforeBreak.length > 0 && afterBreak.length > 0) && (
+                    <tr className="bg-gray-200">
+                      <td 
+                        colSpan={totalColumns} 
+                        className="border border-gray-300 p-2 text-center font-bold"
+                      >
+                        BREAK
+                      </td>
+                    </tr>
+                  )}
+                  
+                  {/* Afternoon sessions (after break) */}
+                  {afterBreak.map((timeSlot) => (
+                    <tr key={`${day}-${timeSlot.id}`} className="bg-gray-50">
+                      <td className="border border-gray-300 p-2 text-center whitespace-nowrap">
+                        {timeSlot.display_text}
+                      </td>
+                      {kelas.map(k => (
+                        <td 
+                          key={`${day}-${timeSlot.id}-${k.id}`} 
+                          className="border border-gray-300 p-2 text-center min-w-20"
+                        >
+                          {renderCell(day, timeSlot, k)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                  
+                  {/* Add a separator between days, except for the last day */}
+                  {dayIndex < availableDays.length - 1 && (
+                    <tr className="h-4">
+                      <td colSpan={totalColumns} className="border-0"></td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
             </tbody>
           </table>
         )}
       </CardContent>
+      
+      {/* Edit Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Edit Jadwal</DialogTitle>
+          </DialogHeader>
+          {selectedJadwal && (
+            <JadwalEditForm 
+              jadwal={selectedJadwal}
+              onSuccess={handleFormSuccess}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+      
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Konfirmasi Hapus Jadwal</AlertDialogTitle>
+            <AlertDialogDescription>
+              Apakah Anda yakin ingin menghapus jadwal ini?
+              {selectedJadwal && (
+                <div className="mt-2 p-2 bg-gray-100 rounded">
+                  <p><strong>Dosen:</strong> {selectedJadwal.dosen.nama} ({selectedJadwal.dosen.kode})</p>
+                  <p><strong>Mata Kuliah:</strong> {selectedJadwal.mata_kuliah.nama} ({selectedJadwal.mata_kuliah.kode})</p>
+                  <p><strong>Kelas:</strong> {selectedJadwal.kelas.nama}</p>
+                  <p><strong>Waktu:</strong> {selectedJadwal.hari}, {selectedJadwal.time_slot.display_text}</p>
+                </div>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogAction onClick={performDelete} className="bg-red-600 hover:bg-red-700">
+              Hapus
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 };

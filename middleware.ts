@@ -7,8 +7,6 @@ const secretKey = new TextEncoder().encode(process.env.JWT_SECRET!);
 export async function middleware(req: NextRequest) {
     const token = req.cookies.get("token")?.value || req.headers.get("Authorization")?.split(" ")[1];
 
-    console.log("🔹 Token dari Cookies:", token);
-
     if (!token) {
         console.log("Token tidak ditemukan, redirect ke /login");
         return NextResponse.redirect(new URL("/login", req.url));
@@ -16,6 +14,7 @@ export async function middleware(req: NextRequest) {
 
     try {
         const { payload } = await jwtVerify(token, secretKey);
+
         console.log("✅ Token Valid! Decoded:", payload);
 
         return NextResponse.next();
@@ -26,5 +25,7 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-    matcher: ["/dashboard/:path*"],
+    matcher: [
+        "/admin/:path*",
+    ],
 };

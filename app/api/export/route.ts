@@ -3,53 +3,7 @@ import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 import * as XLSX from 'xlsx';
 
-// Define types for XLSX cell merges
-interface CellAddress {
-  r: number; // row
-  c: number; // column
-}
-
-interface CellRange {
-  s: CellAddress; // start
-  e: CellAddress; // end
-}
-
 const prisma = new PrismaClient();
-
-// Define types for better TypeScript support
-interface TimeSlot {
-  id: string;
-  display_text: string;
-  period: string;
-  day_specific: boolean;
-  start_time: string;
-  end_time: string;
-}
-
-interface Kelas {
-  id: string;
-  nama: string;
-  period: string;
-}
-
-interface JadwalEntry {
-  id: string;
-  hari: string;
-  time_slot_id: string;
-  kelas_id: string;
-  dosen: {
-    id: string;
-    nama: string;
-    kode: string;
-  };
-  mata_kuliah: {
-    id: string;
-    nama: string;
-    kode: string;
-  };
-  kelas: Kelas;
-  time_slot: TimeSlot;
-}
 
 export async function GET(req: Request) {
   try {
@@ -95,51 +49,53 @@ export async function GET(req: Request) {
       days = ['SENIN', 'SELASA', 'RABU', 'KAMIS', 'JUMAT'];
     }
     
-    // 3. Create Excel workbook
+    // 3. Create workbook
     const workbook = XLSX.utils.book_new();
     
-    // 4. Create headers
-    const headers = ['HARI/JAM', ...kelas.map(k => k.nama)];
-    
-    // 5. Initialize worksheet data with headers
-    const wsData = [headers];
-    
-    // 6. Filter time slots based on day (for the evening period)
-    const getTimeSlotsForDay = (day: string): TimeSlot[] => {
-      if (period === 'SORE') {
-        if (day === 'SABTU') {
-          // Get Saturday-specific slots
-          return timeSlots.filter(ts => ts.day_specific);
+    // 4. Group time slots into before/after break
+    // This is a simplified approach - adjust based on your actual break timing
+    const groupTimeSlots = () => {
+      const beforeBreak: typeof timeSlots = [];
+      const afterBreak: typeof timeSlots = [];
+      
+      for (const slot of timeSlots) {
+        const hour = parseInt(slot.start_time.split(':')[0]);
+        if (hour < 10) {
+          beforeBreak.push(slot);
         } else {
-          // Get weekday evening slots
-          return timeSlots.filter(ts => !ts.day_specific);
+          afterBreak.push(slot);
         }
       }
-      // For morning and afternoon, all time slots apply to all days
-      return timeSlots;
+      
+      return { beforeBreak, afterBreak };
     };
     
-    // 7. Generate Excel data for each day and time slot
-    days.forEach(day => {
-      let firstRow = true;
-      const dayTimeSlots = getTimeSlotsForDay(day);
+    const { beforeBreak, afterBreak } = groupTimeSlots();
+    
+    // 5. Create worksheet data structure
+    // First row: HARI/JAM and class names
+    const headers = ['HARI/JAM', ...kelas.map(k => k.nama)];
+    const wsData = [];
+    
+    // Create the headers row
+    wsData.push(headers);
+    
+    // Process each day
+    for (const day of days) {
+      // Create a day header row
+      const dayRow = [day];
+      // Add empty cells for each kelas
+      for (let i = 0; i < kelas.length; i++) {
+        dayRow.push('');
+      }
+      wsData.push(dayRow);
       
-      dayTimeSlots.forEach(timeSlot => {
-        const row = [];
+      // Add morning time slots
+      for (const timeSlot of beforeBreak) {
+        const row = [timeSlot.display_text];
         
-        // Add day label on first row of the day
-        if (firstRow) {
-          row.push(day);
-          firstRow = false;
-        } else {
-          row.push(''); // Empty cell for non-first rows
-        }
-        
-        // Add time slot
-        row.push(timeSlot.display_text);
-        
-        // Add jadwal entries for each kelas
-        kelas.forEach(k => {
+        // Add cells for each kelas
+        for (const k of kelas) {
           const entry = jadwalEntries.find(j => 
             j.hari === day && 
             j.time_slot_id === timeSlot.id && 
@@ -151,42 +107,135 @@ export async function GET(req: Request) {
           } else {
             row.push('');
           }
-        });
+        }
         
         wsData.push(row);
-      });
-    });
+      }
+      
+      // Add BREAK row if we have both morning and afternoon sessions
+      if (beforeBreak.length > 0 && afterBreak.length > 0) {
+        const breakRow = ['BREAK'];
+        // Add empty cells for each kelas
+        for (let i = 0; i < kelas.length; i++) {
+          breakRow.push('');
+        }
+        wsData.push(breakRow);
+      }
+      
+      // Add afternoon time slots
+      for (const timeSlot of afterBreak) {
+        const row = [timeSlot.display_text];
+        
+        // Add cells for each kelas
+        for (const k of kelas) {
+          const entry = jadwalEntries.find(j => 
+            j.hari === day && 
+            j.time_slot_id === timeSlot.id && 
+            j.kelas_id === k.id
+          );
+          
+          if (entry) {
+            row.push(`${entry.mata_kuliah.kode}/${entry.dosen.kode}`);
+          } else {
+            row.push('');
+          }
+        }
+        
+        wsData.push(row);
+      }
+      
+      // Add an empty row as separator between days (except for the last day)
+      if (day !== days[days.length - 1]) {
+        wsData.push(Array(kelas.length + 1).fill(''));
+      }
+    }
     
-    // 8. Create Excel worksheet
+    // 6. Create worksheet
     const ws = XLSX.utils.aoa_to_sheet(wsData);
     
-    // 9. Add cell merges for day labels
-    const merges: CellRange[] = [];
-    let startRow = 1;
+    // 7. Apply styling
+    if (!ws['!ref']) {
+      ws['!ref'] = "A1";
+    }
     
-    days.forEach(day => {
-      const dayTimeSlots = getTimeSlotsForDay(day);
-      
+    const range = XLSX.utils.decode_range(ws['!ref']);
+    
+    // Create merges array for styling
+    const merges = [];
+    
+    // Handle day header merges (colspan)
+    let rowIndex = 1; // Start after the header row (0-indexed)
+    
+    for (const day of days) {
+      // Day headers need colspans
       merges.push({
-        s: { r: startRow, c: 0 },
-        e: { r: startRow + dayTimeSlots.length - 1, c: 0 }
+        s: { r: rowIndex, c: 0 },    // Start: beginning of row at column 0
+        e: { r: rowIndex, c: kelas.length }  // End: same row, last column
       });
       
-      startRow += dayTimeSlots.length;
-    });
+      // Count time slots for this day (accounting for break row if needed)
+      const timeSlotCount = beforeBreak.length + afterBreak.length + 
+        (beforeBreak.length > 0 && afterBreak.length > 0 ? 1 : 0);
+      
+      // Move to the next day's starting row (+1 for empty separator row, except for last day)
+      rowIndex += timeSlotCount + (day !== days[days.length - 1] ? 1 : 0);
+      
+      // Move to next row for next day's header
+      rowIndex += 1;
+    }
     
+    // Apply merges to worksheet
     ws['!merges'] = merges;
     
-    // 10. Set column widths
-    const colWidths = [
-      { wch: 15 },  // HARI/JAM
-      { wch: 15 },  // Time slot
-      ...kelas.map(() => ({ wch: 12 }))  // Kelas columns
-    ];
+    // 8. Apply styles (using cell properties)
+    // Create empty !cols array if it doesn't exist
+    ws['!cols'] = ws['!cols'] || [];
     
-    ws['!cols'] = colWidths;
+    // Set width for HARI/JAM column
+    ws['!cols'][0] = { wch: 15 };
     
-    // 11. Add worksheet to workbook with period-specific name
+    // Set width for kelas columns
+    for (let i = 0; i < kelas.length; i++) {
+      ws['!cols'][i + 1] = { wch: 12 };
+    }
+    
+    // 9. Apply coloring for day headers and BREAK rows
+    // Note: We need to manually set cell styles for each cell
+    // Using an approximation with cell formatting
+    
+    // Helper to get cell address
+    const getCellAddress = (r: number, c: number) => XLSX.utils.encode_cell({r, c});
+    
+    // Format day headers
+    for (let i = 0; i < days.length; i++) {
+      const rowNum = 1 + (i * (beforeBreak.length + afterBreak.length + 
+        (beforeBreak.length > 0 && afterBreak.length > 0 ? 1 : 0) + 
+        (i < days.length - 1 ? 1 : 0)));
+      
+      // Format all cells in the day header row
+      for (let colNum = 0; colNum <= kelas.length; colNum++) {
+        const cellAddr = getCellAddress(rowNum, colNum);
+        if (!ws[cellAddr]) continue;
+        
+        ws[cellAddr].s = {
+          fill: { fgColor: { rgb: "E0E0E0" } }, // Light gray
+          font: { bold: true }
+        };
+      }
+    }
+    
+    // Format header row
+    for (let colNum = 0; colNum <= kelas.length; colNum++) {
+      const cellAddr = getCellAddress(0, colNum);
+      if (!ws[cellAddr]) continue;
+      
+      ws[cellAddr].s = {
+        fill: { fgColor: { rgb: "F0F0F0" } }, // Lighter gray
+        font: { bold: true }
+      };
+    }
+    
+    // 10. Add worksheet to workbook
     let sheetName: string;
     switch(period) {
       case 'PAGI': sheetName = `Jadwal Pagi`; break;
@@ -197,23 +246,23 @@ export async function GET(req: Request) {
     
     XLSX.utils.book_append_sheet(workbook, ws, sheetName);
     
-    // 12. Generate Excel buffer
+    // 11. Generate Excel buffer
     const excelBuffer = XLSX.write(workbook, { 
       bookType: 'xlsx', 
       type: 'buffer' 
     });
     
-    // 13. Return Excel file for download
+    // 12. Return Excel file for download
     return new NextResponse(excelBuffer, {
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'Content-Disposition': `attachment; filename="jadwal_${period.toLowerCase()}.xlsx"`
       }
     });
-  } catch (error) {
-    console.error('Error in export API:', error);
+  } catch (error:any) {
+    console.error('Error generating Excel:', error);
     return NextResponse.json(
-      { error: 'Failed to generate Excel file' },
+      { error: 'Failed to generate Excel file', details: error.message },
       { status: 500 }
     );
   }

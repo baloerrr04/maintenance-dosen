@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import prisma from "@/lib/prisma"
+import { Prisma } from "@prisma/client"
 
 export async function GET() {
     try {
@@ -21,7 +22,7 @@ export async function POST(req: Request) {
 
         const newMatkul = await prisma.mataKuliah.create({
             data: { nama, sks: Number(sks), jam: Number(jam), kode, semester: Number(semester), prodi_id: prodi_id},
-        });
+        }) as Prisma.MataKuliahUncheckedCreateInput;
 
         return NextResponse.json(newMatkul, { status: 200 });
     } catch (error) {

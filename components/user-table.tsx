@@ -14,22 +14,22 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useData, useMutateData } from "@/hooks/use-data";
-import { Dosen } from "@/types/jadwal"
+import { User } from "@/types/jadwal"
 
-
-export default function DosenTable() {
+export default function UsersTable() {
   const [open, setOpen] = useState(false);
-  const [formData, setFormData] = useState<Dosen>({
+  const [formData, setFormData] = useState<User>({
     id: "",
     nama: "",
-    kode: "",
+    username: "",
+    password: ""
   });
   const [isEditing, setIsEditing] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const { data: dosens, isLoading, isError } = useData<Dosen>("dosen", "/api/dosen");
-  const {  addMutation, editMutation, deleteMutation } = useMutateData<Dosen>("dosen", "/api/dosen");
+  const {data: users, isLoading: loadingUser, isError: errorUser} = useData<User>('user', '/api/users')
+  const { addMutation, editMutation, deleteMutation } = useMutateData<User>('user', '/api/users')
 
   // Handle input perubahan
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -39,18 +39,20 @@ export default function DosenTable() {
   // Tambah/Edit dosen
   const handleSubmit = async () => {
     if (isEditing) {
-     await editMutation.mutateAsync({
-      id: formData.id,
-      updatedData: {
+      await editMutation.mutateAsync({
         id: formData.id,
-        nama: formData.nama,
-        kode: formData.kode
-      }
-     })
+        updatedData: {
+          id: formData.id,
+          nama: formData.nama,
+          username: formData.username,
+          password: formData.password
+        }
+      })
     } else {
       await addMutation.mutateAsync({
         nama: formData.nama,
-        kode: formData.kode
+        username: formData.username,
+        password: formData.password,
       })
     }
 
@@ -60,21 +62,21 @@ export default function DosenTable() {
   // Hapus dosen
   const handleDelete = async () => {
     if (!deleteId) return;
-    await deleteMutation.mutateAsync(deleteId)
+    await deleteMutation.mutateAsync(deleteId);
     setConfirmOpen(false);
   };
   
 
   // Edit dosen
-  const handleEdit = (dosen: Dosen) => {
-    setFormData(dosen);
+  const handleEdit = (user: User) => {
+    setFormData(user);
     setIsEditing(true);
     setOpen(true);
   };
 
-  const columns: ColumnDef<Dosen>[] = [
-    { accessorKey: "kode", header: "Kode" },
+  const columns: ColumnDef<User>[] = [
     { accessorKey: "nama", header: "Nama" },
+    { accessorKey: "username", header: "username" },
     {
       id: "actions",
       header: "Aksi",
@@ -98,21 +100,21 @@ export default function DosenTable() {
         className="mb-4"
         onClick={() => {
           setIsEditing(false);
-          setFormData({ id: "", nama: "", kode: "" });
+          setFormData({ id: "", nama: "", username: "", password: "" });
           setOpen(true);
         }}
       >
-        Tambah Dosen
+        Tambah Kelas
       </Button>
 
-      <DataTable columns={columns} data={dosens ?? []} />
+      <DataTable columns={columns} data={users ?? []} />
 
       {/* Modal Form */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {isEditing ? "Edit Dosen" : "Tambah Dosen"}
+              {isEditing ? "Edit Kelas" : "Tambah Kelas"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
@@ -125,11 +127,19 @@ export default function DosenTable() {
               />
             </div>
             <div>
-              <Label>Kode</Label>
+              <Label>Username</Label>
               <Input
-                name="kode"
-                value={formData.kode}
+                name="username"
+                value={formData.username}
                 onChange={handleChange}
+              />
+            </div>
+            <div>
+              <Label>Password</Label>
+              <Input
+                name="password"
+                onChange={handleChange}
+                type="password"
               />
             </div>
             <Button onClick={handleSubmit}>
@@ -145,7 +155,7 @@ export default function DosenTable() {
           <DialogHeader>
             <DialogTitle>Konfirmasi Hapus</DialogTitle>
           </DialogHeader>
-          <p>Apakah Anda yakin ingin menghapus dosen ini?</p>
+          <p>Apakah Anda yakin ingin menghapus kelas ini?</p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirmOpen(false)}>Batal</Button>
             <Button variant="destructive" onClick={handleDelete}>Ya, Hapus</Button>

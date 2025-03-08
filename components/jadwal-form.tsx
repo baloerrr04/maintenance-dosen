@@ -1,55 +1,20 @@
 "use client"
 
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle, CheckCircle } from 'lucide-react';
-
-// Define TypeScript interfaces
-interface TimeSlot {
-  id: string;
-  display_text: string;
-  period: string;
-  day_specific: boolean;
-  start_time: string;
-  end_time: string;
-}
-
-interface Kelas {
-  id: string;
-  nama: string;
-  period: string;
-}
-
-interface Dosen {
-  id: string;
-  nama: string;
-  kode: string;
-}
-
-interface MataKuliah {
-  id: string;
-  nama: string;
-  kode: string;
-  prodi_id: string;
-  sks: number;
-  jam: number;
-}
-
-interface Prodi {
-  id: string;
-  nama: string;
-}
+import { CheckCircle } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Dosen, Kelas, MataKuliah, TimeSlot, JadwalFormProps, Prodi } from "@/types/jadwal"
 
 interface FormData {
   dosen_id: string;
   mata_kuliah_id: string;
   kelas_id: string;
   hari: string;
-  time_slot_id: string;
+  time_slot_ids: string[]; // Changed to array for multiple selections
   prodi_id: string;
   period: string;
 }
@@ -58,12 +23,14 @@ interface ConflictCheck {
   hasConflict: boolean;
   message: string;
   type: 'dosen' | 'kelas' | 'none';
+  timeSlotId?: string; // Add the specific time slot that has a conflict
 }
 
 interface ConflictResponse {
   conflicts: Array<{
     type: 'dosen' | 'kelas';
     jadwal_id: string;
+    time_slot_id: string;
     kelas_id?: string;
     kelas_nama?: string;
     dosen_id?: string;
@@ -73,22 +40,38 @@ interface ConflictResponse {
   entities: {
     dosen: Dosen[];
     kelas: Kelas[];
+    time_slots: TimeSlot[];
   };
 }
 
-interface JadwalFormProps {
-  defaultPeriod?: string;
-  onSuccess?: () => void;
-}
+interface ConflictData {
+    type: 'dosen' | 'kelas';
+    jadwal_id: string;
+    time_slot_id: string;
+    kelas_id?: string;
+    kelas_nama?: string;
+    dosen_id?: string;
+    dosen_nama?: string;
+    dosen_kode?: string;
+  }
+  
+  // Define the shape of the conflict response
+  interface ConflictResponse {
+    conflicts: ConflictData[];
+    entities: {
+      dosen: Dosen[];
+      kelas: Kelas[];
+      time_slots: TimeSlot[];
+    };
+  }
 
 const JadwalForm: React.FC<JadwalFormProps> = ({ defaultPeriod = 'PAGI', onSuccess }) => {
-  // Form state
   const [formData, setFormData] = useState<FormData>({
     dosen_id: '',
     mata_kuliah_id: '',
     kelas_id: '',
     hari: '',
-    time_slot_id: '',
+    time_slot_ids: [], // Changed to array for multiple selections
     prodi_id: '',
     period: defaultPeriod,
   });
@@ -108,11 +91,7 @@ const JadwalForm: React.FC<JadwalFormProps> = ({ defaultPeriod = 'PAGI', onSucce
   const [availableDays, setAvailableDays] = useState<string[]>([]);
   
   // Conflict checking
-  const [conflict, setConflict] = useState<ConflictCheck>({ 
-    hasConflict: false, 
-    message: '', 
-    type: 'none' 
-  });
+  const [conflicts, setConflicts] = useState<ConflictCheck[]>([]); 
   const [checking, setChecking] = useState<boolean>(false);
   
   // Success state
@@ -220,27 +199,68 @@ const JadwalForm: React.FC<JadwalFormProps> = ({ defaultPeriod = 'PAGI', onSucce
       }
     }
     
+    // Sort by start_time to ensure they appear in chronological order
+    filtered.sort((a, b) => {
+      return a.start_time.localeCompare(b.start_time);
+    });
+    
     setFilteredTimeSlots(filtered);
     
-    // Reset time slot selection if it's not available in the new period/day
-    if (formData.time_slot_id) {
-      const stillValid = filtered.some(ts => ts.id === formData.time_slot_id);
-      if (!stillValid) {
-        setFormData(prev => ({ ...prev, time_slot_id: '' }));
-      }
+    // Reset time slot selections that are no longer valid
+    const validTimeSlotIds = filtered.map(ts => ts.id);
+    const stillValidIds = formData.time_slot_ids.filter(id => validTimeSlotIds.includes(id));
+    
+    if (stillValidIds.length !== formData.time_slot_ids.length) {
+      setFormData(prev => ({ ...prev, time_slot_ids: stillValidIds }));
     }
-  }, [formData.period, formData.hari, timeSlots, formData.time_slot_id]);
+  }, [formData.period, formData.hari, timeSlots, formData.time_slot_ids]);
   
-  // Handle input changes
-  const handleChange = (field: keyof FormData, value: string): void => {
+  // Handle input changes for single-value fields
+  const handleChange = (field: keyof Omit<FormData, 'time_slot_ids'>, value: string): void => {
     setFormData(prev => ({ ...prev, [field]: value }));
     
-    // Reset conflict state when form changes
-    if (conflict.hasConflict) {
-      setConflict({ hasConflict: false, message: '', type: 'none' });
+    // Reset conflicts when form changes
+    if (conflicts.length > 0) {
+      setConflicts([]);
     }
     
     // Reset success message when form changes
+    if (success) {
+      setSuccess(false);
+    }
+    
+    // Clear time slot selections when changing day or period
+    if (field === 'hari' || field === 'period') {
+      setFormData(prev => ({ ...prev, time_slot_ids: [] }));
+    }
+  };
+  
+  // Handle time slot selection/deselection
+  const handleTimeSlotToggle = (timeSlotId: string): void => {
+    setFormData(prev => {
+      const currentSelections = [...prev.time_slot_ids];
+      
+      if (currentSelections.includes(timeSlotId)) {
+        // Remove if already selected
+        return {
+          ...prev,
+          time_slot_ids: currentSelections.filter(id => id !== timeSlotId)
+        };
+      } else {
+        // Add if not selected
+        return {
+          ...prev,
+          time_slot_ids: [...currentSelections, timeSlotId]
+        };
+      }
+    });
+    
+    // Reset conflicts
+    if (conflicts.length > 0) {
+      setConflicts([]);
+    }
+    
+    // Reset success message
     if (success) {
       setSuccess(false);
     }
@@ -248,7 +268,7 @@ const JadwalForm: React.FC<JadwalFormProps> = ({ defaultPeriod = 'PAGI', onSucce
   
   // Check for scheduling conflicts
   const checkConflicts = async (): Promise<void> => {
-    if (!formData.dosen_id || !formData.hari || !formData.time_slot_id || 
+    if (!formData.dosen_id || !formData.hari || formData.time_slot_ids.length === 0 || 
         !formData.kelas_id || !formData.mata_kuliah_id) {
       return;
     }
@@ -256,7 +276,7 @@ const JadwalForm: React.FC<JadwalFormProps> = ({ defaultPeriod = 'PAGI', onSucce
     setChecking(true);
     
     try {
-      const response = await fetch('/api/jadwal/check-conflict', {
+      const response = await fetch('/api/jadwal/check-conflict-multi', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -265,43 +285,42 @@ const JadwalForm: React.FC<JadwalFormProps> = ({ defaultPeriod = 'PAGI', onSucce
           dosen_id: formData.dosen_id,
           kelas_id: formData.kelas_id,
           hari: formData.hari,
-          time_slot_id: formData.time_slot_id,
+          time_slot_ids: formData.time_slot_ids,
           period: formData.period
         }),
       });
       
       const data: ConflictResponse = await response.json();
       
-      if (data.conflicts.length > 0) {
-        const conflictData = data.conflicts[0];
-        let message = '';
-        let type: 'dosen' | 'kelas' = 'dosen';
-        
-        if (conflictData.type === 'dosen') {
-          const dosenInfo = data.entities.dosen.find(d => d.id === formData.dosen_id);
-          if (dosenInfo) {
-            message = `Dosen ${dosenInfo.nama} (${dosenInfo.kode}) sudah dijadwalkan pada hari dan jam yang sama di kelas ${conflictData.kelas_nama}`;
-            type = 'dosen';
+      if (data.conflicts && data.conflicts.length > 0) {
+        // Process conflicts with proper typing
+        const newConflicts: ConflictCheck[] = data.conflicts.map((conflict: ConflictData) => {
+          let message = '';
+          let type: 'dosen' | 'kelas' = conflict.type;
+          
+          // Find the time slot info
+          const timeSlot = data.entities.time_slots.find(ts => ts.id === conflict.time_slot_id);
+          const timeSlotDisplay = timeSlot ? timeSlot.display_text : 'unknown time';
+          
+          if (conflict.type === 'dosen') {
+            const dosenInfo = data.entities.dosen.find(d => d.id === formData.dosen_id);
+            message = `Dosen ${dosenInfo?.nama} (${dosenInfo?.kode}) sudah dijadwalkan pada hari ${formData.hari} jam ${timeSlotDisplay} di kelas ${conflict.kelas_nama}`;
+          } else if (conflict.type === 'kelas') {
+            const kelasInfo = data.entities.kelas.find(k => k.id === formData.kelas_id);
+            message = `Kelas ${kelasInfo?.nama} sudah dijadwalkan dengan dosen ${conflict.dosen_nama} (${conflict.dosen_kode}) pada hari ${formData.hari} jam ${timeSlotDisplay}`;
           }
-        } else if (conflictData.type === 'kelas') {
-          const kelasInfo = data.entities.kelas.find(k => k.id === formData.kelas_id);
-          if (kelasInfo) {
-            message = `Kelas ${kelasInfo.nama} sudah dijadwalkan dengan dosen ${conflictData.dosen_nama} (${conflictData.dosen_kode}) pada hari dan jam yang sama`;
-            type = 'kelas';
-          }
-        }
-        
-        setConflict({
-          hasConflict: true,
-          message,
-          type
+          
+          return {
+            hasConflict: true,
+            message,
+            type,
+            timeSlotId: conflict.time_slot_id
+          };
         });
+        
+        setConflicts(newConflicts);
       } else {
-        setConflict({
-          hasConflict: false,
-          message: '',
-          type: 'none'
-        });
+        setConflicts([]);
       }
     } catch (error) {
       console.error('Error checking conflicts:', error);
@@ -312,30 +331,42 @@ const JadwalForm: React.FC<JadwalFormProps> = ({ defaultPeriod = 'PAGI', onSucce
   
   // Effect to check conflicts when relevant form fields change
   useEffect(() => {
-    if (formData.dosen_id && formData.hari && formData.time_slot_id && formData.kelas_id) {
+    if (formData.dosen_id && formData.hari && formData.time_slot_ids.length > 0 && formData.kelas_id) {
       const timer = setTimeout(() => {
         checkConflicts();
       }, 500); // Debounce
       
       return () => clearTimeout(timer);
     }
-  }, [formData.dosen_id, formData.hari, formData.time_slot_id, formData.kelas_id]);
+  }, [formData.dosen_id, formData.hari, formData.time_slot_ids, formData.kelas_id]);
   
   // Submit the form
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     
-    if (conflict.hasConflict) {
+    if (conflicts.length > 0) {
+      return;
+    }
+    
+    if (formData.time_slot_ids.length === 0) {
       return;
     }
     
     try {
-      const response = await fetch('/api/jadwal', {
+      // Create a batch request to add multiple jadwal entries
+      const response = await fetch('/api/jadwal/batch', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify({
+          dosen_id: formData.dosen_id,
+          mata_kuliah_id: formData.mata_kuliah_id,
+          kelas_id: formData.kelas_id,
+          hari: formData.hari,
+          time_slot_ids: formData.time_slot_ids,
+          period: formData.period
+        }),
       });
       
       if (!response.ok) throw new Error('Failed to save jadwal');
@@ -346,7 +377,7 @@ const JadwalForm: React.FC<JadwalFormProps> = ({ defaultPeriod = 'PAGI', onSucce
         mata_kuliah_id: '',
         kelas_id: '',
         hari: '',
-        time_slot_id: '',
+        time_slot_ids: [],
         prodi_id: formData.prodi_id,
         period: formData.period,
       });
@@ -368,6 +399,23 @@ const JadwalForm: React.FC<JadwalFormProps> = ({ defaultPeriod = 'PAGI', onSucce
     } catch (error) {
       console.error('Error saving jadwal:', error);
     }
+  };
+  
+  // Get time slot display name
+  const getTimeSlotName = (id: string): string => {
+    const timeSlot = timeSlots.find(ts => ts.id === id);
+    return timeSlot ? timeSlot.display_text : '';
+  };
+  
+  // Check if a specific time slot has conflicts
+  const hasConflictForTimeSlot = (timeSlotId: string): boolean => {
+    return conflicts.some(conflict => conflict.timeSlotId === timeSlotId);
+  };
+  
+  // Get conflict message for a specific time slot
+  const getConflictMessage = (timeSlotId: string): string => {
+    const conflict = conflicts.find(c => c.timeSlotId === timeSlotId);
+    return conflict ? conflict.message : '';
   };
   
   if (loading) {
@@ -489,40 +537,71 @@ const JadwalForm: React.FC<JadwalFormProps> = ({ defaultPeriod = 'PAGI', onSucce
               </SelectContent>
             </Select>
           </div>
-          
-          {/* Time Slot */}
-          <div className="space-y-2">
-            <Label htmlFor="time_slot">Jam</Label>
-            <Select 
-              value={formData.time_slot_id} 
-              onValueChange={(value) => handleChange('time_slot_id', value)}
-              disabled={filteredTimeSlots.length === 0 || !formData.hari}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Pilih Jam" />
-              </SelectTrigger>
-              <SelectContent>
-                {filteredTimeSlots.map(ts => (
-                  <SelectItem key={ts.id} value={ts.id}>{ts.display_text}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
         </div>
         
-        {conflict.hasConflict && (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Konflik Jadwal!</AlertTitle>
-            <AlertDescription>{conflict.message}</AlertDescription>
-          </Alert>
+        {/* Multiple Time Slots Selection */}
+        {formData.hari && (
+          <div className="space-y-2 mt-4">
+            <Label htmlFor="time_slots">Jam (Pilih satu atau lebih)</Label>
+            <div className="grid grid-cols-2 gap-2 border rounded-md p-3">
+              {filteredTimeSlots.map((timeSlot) => {
+                const isChecked = formData.time_slot_ids.includes(timeSlot.id);
+                const hasConflict = hasConflictForTimeSlot(timeSlot.id);
+                
+                return (
+                  <div 
+                    key={timeSlot.id} 
+                    className={`flex items-center space-x-2 p-2 rounded ${isChecked ? (hasConflict ? 'bg-red-50' : 'bg-blue-50') : ''}`}
+                  >
+                    <Checkbox 
+                      id={`timeSlot-${timeSlot.id}`}
+                      checked={isChecked}
+                      onCheckedChange={() => handleTimeSlotToggle(timeSlot.id)}
+                    />
+                    <label 
+                      htmlFor={`timeSlot-${timeSlot.id}`}
+                      className={`text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 ${hasConflict ? 'text-red-600' : ''}`}
+                    >
+                      {timeSlot.display_text}
+                    </label>
+                    
+                    {hasConflict && (
+                      <div className="text-xs text-red-600 ml-2">
+                        {getConflictMessage(timeSlot.id)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            
+            {/* Selected Time Slots Summary */}
+            {formData.time_slot_ids.length > 0 && (
+              <div className="bg-gray-50 p-2 rounded-md mt-2">
+                <Label className="text-sm">Slot Terpilih: {formData.time_slot_ids.length}</Label>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {formData.time_slot_ids.map(id => (
+                    <span key={id} className={`px-2 py-1 text-xs rounded ${hasConflictForTimeSlot(id) ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
+                      {getTimeSlotName(id)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )}
         
+        {/* General success message */}
         {success && (
           <Alert className="bg-green-50 border-green-200">
             <CheckCircle className="h-4 w-4 text-green-500" />
             <AlertTitle>Berhasil!</AlertTitle>
-            <AlertDescription>Jadwal berhasil ditambahkan.</AlertDescription>
+            <AlertDescription>
+              {formData.time_slot_ids.length > 1 
+                ? `${formData.time_slot_ids.length} jadwal berhasil ditambahkan.` 
+                : 'Jadwal berhasil ditambahkan.'
+              }
+            </AlertDescription>
           </Alert>
         )}
         
@@ -531,17 +610,21 @@ const JadwalForm: React.FC<JadwalFormProps> = ({ defaultPeriod = 'PAGI', onSucce
             type="submit" 
             onClick={handleSubmit}
             disabled={
-              conflict.hasConflict || 
+              conflicts.length > 0 || 
               checking || 
               !formData.dosen_id || 
               !formData.mata_kuliah_id || 
               !formData.kelas_id || 
               !formData.hari || 
-              !formData.time_slot_id
+              formData.time_slot_ids.length === 0
             }
             className="w-full"
           >
-            {checking ? 'Memeriksa Konflik...' : 'Simpan Jadwal'}
+            {checking ? 'Memeriksa Konflik...' : (
+              formData.time_slot_ids.length > 1 
+                ? `Simpan ${formData.time_slot_ids.length} Jadwal` 
+                : 'Simpan Jadwal'
+            )}
           </Button>
         </div>
       </form>

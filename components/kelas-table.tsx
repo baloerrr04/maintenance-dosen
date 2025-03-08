@@ -13,19 +13,12 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { toast } from "sonner";
-
-// Model Dosen
-interface Kelas {
-  id: string;
-  nama: string;
-  period: string
-}
+import {Kelas} from "@/types/jadwal"
+import { useData, useMutateData } from "@/hooks/use-data";
 
 // Definisi kolom
 
 export default function KelasTable() {
-  const [data, setData] = useState<Kelas[]>([]);
   const [open, setOpen] = useState(false);
   const [formData, setFormData] = useState<Kelas>({
     id: "",
@@ -36,19 +29,9 @@ export default function KelasTable() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
+  const {data: kelas, isLoading, isError} = useData<Kelas>('kelas', '/api/kelas')
+  const { addMutation, editMutation, deleteMutation } = useMutateData<Kelas>('kelas', '/api/kelas')
 
-  // Fetch data dari API
-  useEffect(() => {
-    async function fetchData() {
-      const res = await fetch("/api/kelas");
-      const result = await res.json();
-      console.log(result);
-      setData(result);
-    }
-    fetchData();
-  }, []);
-
-  // Handle input perubahan
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
@@ -56,37 +39,19 @@ export default function KelasTable() {
   // Tambah/Edit dosen
   const handleSubmit = async () => {
     if (isEditing) {
-      const res = await fetch("/api/kelas", {
-        method: "PUT",
-        body: JSON.stringify({
+      await editMutation.mutateAsync({
+        id: formData.id,
+        updatedData: {
           id: formData.id,
           nama: formData.nama,
           period: formData.period
-        }),
-        headers: { "Content-Type": "application/json" },
-      });
-
-      if (res.ok) {
-        const updatedKelas = await res.json();
-        setData(data.map((d) => (d.id === updatedKelas.id ? updatedKelas : d)));
-        toast.success("Kelas berhasil diperbarui!");
-      } else {
-        toast.error("Gagal memperbarui kelas.");
-      }
+        }
+      })
     } else {
-      const res = await fetch("/api/kelas", {
-        method: "POST",
-        body: JSON.stringify({ nama: formData.nama, period: formData.period }),
-        headers: { "Content-Type": "application/json" },
-      });
-
-      if (res.ok) {
-        const newKelas = await res.json();
-        setData([...data, newKelas]);
-        toast.success("Kelas berhasil ditambahkan!");
-      } else {
-        toast.error("Gagal menambahkan kelas.");
-      }
+      await addMutation.mutateAsync({
+        nama: formData.nama,
+        period: formData.period
+      })
     }
 
     setOpen(false);
@@ -95,20 +60,7 @@ export default function KelasTable() {
   // Hapus dosen
   const handleDelete = async () => {
     if (!deleteId) return;
-  
-    const res = await fetch("/api/kelas", {
-      method: "DELETE",
-      body: JSON.stringify({ id: deleteId }),
-      headers: { "Content-Type": "application/json" },
-    });
-  
-    if (res.ok) {
-      setData((prevData) => prevData.filter((d) => d.id !== deleteId));
-      toast.success("Kelas berhasil dihapus");
-    } else {
-      toast.error("Gagal menghapus kelas");
-    }
-  
+    await deleteMutation.mutateAsync(deleteId)
     setConfirmOpen(false);
   };
   
@@ -153,7 +105,7 @@ export default function KelasTable() {
         Tambah Kelas
       </Button>
 
-      <DataTable columns={columns} data={data} />
+      <DataTable columns={columns} data={kelas ?? []} />
 
       {/* Modal Form */}
       <Dialog open={open} onOpenChange={setOpen}>

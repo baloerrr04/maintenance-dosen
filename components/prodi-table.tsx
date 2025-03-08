@@ -13,15 +13,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { toast } from "sonner";
-
-// Model Dosen
-interface Prodi {
-  id: string;
-  nama: string;
-}
-
-// Definisi kolom
+import { useData, useMutateData } from "@/hooks/use-data";
+import { Prodi } from "@/types/jadwal"
 
 export default function ProdiTable() {
   const [data, setData] = useState<Prodi[]>([]);
@@ -35,16 +28,8 @@ export default function ProdiTable() {
   const [confirmOpen, setConfirmOpen] = useState(false);
 
 
-  // Fetch data dari API
-  useEffect(() => {
-    async function fetchData() {
-      const res = await fetch("/api/prodi");
-      const result = await res.json();
-      console.log(result);
-      setData(result);
-    }
-    fetchData();
-  }, []);
+  const {data: prodis, isLoading, isError} = useData<Prodi>('prodi', '/api/prodi')
+  const { addMutation, editMutation, deleteMutation } = useMutateData<Prodi>('prodi', '/api/prodi')
 
   // Handle input perubahan
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -54,36 +39,17 @@ export default function ProdiTable() {
   // Tambah/Edit dosen
   const handleSubmit = async () => {
     if (isEditing) {
-      const res = await fetch("/api/prodi", {
-        method: "PUT",
-        body: JSON.stringify({
-          id: formData.id,
-          nama: formData.nama,
-        }),
-        headers: { "Content-Type": "application/json" },
-      });
-
-      if (res.ok) {
-        const updatedProdi = await res.json();
-        setData(data.map((d) => (d.id === updatedProdi.id ? updatedProdi : d)));
-        toast.success("Prodi berhasil diperbarui!");
-      } else {
-        toast.error("Gagal memperbarui prodi.");
+     await editMutation.mutateAsync({
+      id: formData.id,
+      updatedData: {
+        id: formData.id,
+        nama: formData.nama
       }
+     })
     } else {
-      const res = await fetch("/api/prodi", {
-        method: "POST",
-        body: JSON.stringify({ nama: formData.nama }),
-        headers: { "Content-Type": "application/json" },
-      });
-
-      if (res.ok) {
-        const newProdi = await res.json();
-        setData([...data, newProdi]);
-        toast.success("Prodi berhasil ditambahkan!");
-      } else {
-        toast.error("Gagal menambahkan prodi.");
-      }
+      await addMutation.mutateAsync({
+        nama: formData.nama
+      })
     }
 
     setOpen(false);
@@ -92,20 +58,7 @@ export default function ProdiTable() {
   // Hapus dosen
   const handleDelete = async () => {
     if (!deleteId) return;
-  
-    const res = await fetch("/api/prodi", {
-      method: "DELETE",
-      body: JSON.stringify({ id: deleteId }),
-      headers: { "Content-Type": "application/json" },
-    });
-  
-    if (res.ok) {
-      setData((prevData) => prevData.filter((d) => d.id !== deleteId));
-      toast.success("Prodi berhasil dihapus");
-    } else {
-      toast.error("Gagal menghapus prodi");
-    }
-  
+    await deleteMutation.mutateAsync(deleteId)  
     setConfirmOpen(false);
   };
   
@@ -149,7 +102,7 @@ export default function ProdiTable() {
         Tambah Prodi
       </Button>
 
-      <DataTable columns={columns} data={data} />
+      <DataTable columns={columns} data={prodis ?? []} />
 
       {/* Modal Form */}
       <Dialog open={open} onOpenChange={setOpen}>
